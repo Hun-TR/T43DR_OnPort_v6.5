@@ -663,38 +663,60 @@ bool requestLEDStatus(String& ledResponse) {
     return false;
 }
 
-// LED durumunu otomatik parse et ve detaylı bilgi döndür
+// LED durumunu otomatik parse et ve detaylı bilgi döndür (eski format - backward compatibility)
 bool parseLEDStatus(const String& ledData, uint8_t& inputByte, uint8_t& outputByte) {
-    // Format: "L:AABB"
+    uint8_t alarmByte = 0;
+    return parseLEDStatus(ledData, inputByte, outputByte, alarmByte);
+}
+
+// LED durumunu otomatik parse et - YENİ FORMAT (L:AABBCC)
+bool parseLEDStatus(const String& ledData, uint8_t& inputByte, uint8_t& outputByte, uint8_t& alarmByte) {
+    // Format: "L:AABBCC"
     // AA = Input byte (2 hex digits)
     // BB = Output byte (2 hex digits)
-    
+    // CC = Alarm byte (2 hex digits) - OPSİYONEL
+
     if (!ledData.startsWith("L:") || ledData.length() < 6) {
         return false;
     }
-    
+
     // "L:" kısmını atla
     String hexData = ledData.substring(2);
     hexData.trim();
-    
-    // Minimum 4 karakter olmalı
+
+    // Minimum 4 karakter olmalı (AABB)
     if (hexData.length() < 4) {
         return false;
     }
-    
+
     // İlk 2 hex digit -> Input
     String inputHex = hexData.substring(0, 2);
     inputByte = (uint8_t)strtol(inputHex.c_str(), NULL, 16);
-    
-    // Son 2 hex digit -> Output
+
+    // Sonraki 2 hex digit -> Output
     String outputHex = hexData.substring(2, 4);
     outputByte = (uint8_t)strtol(outputHex.c_str(), NULL, 16);
-    
-    // Debug log
-    addLog("📊 LED Parse: IN=0x" + String(inputByte, HEX) + 
-           " (0b" + String(inputByte, BIN) + "), OUT=0x" + String(outputByte, HEX) + 
-           " (0b" + String(outputByte, BIN) + ")", DEBUG, "UART");
-    
+
+    // Eğer 6 karakter varsa (AABBCC), son 2 karakter -> Alarm
+    if (hexData.length() >= 6) {
+        String alarmHex = hexData.substring(4, 6);
+        alarmByte = (uint8_t)strtol(alarmHex.c_str(), NULL, 16);
+
+        // Debug log (alarm dahil)
+        addLog("📊 LED Parse: IN=0x" + String(inputByte, HEX) +
+               " (0b" + String(inputByte, BIN) + "), OUT=0x" + String(outputByte, HEX) +
+               " (0b" + String(outputByte, BIN) + "), ALARM=0x" + String(alarmByte, HEX) +
+               " (0b" + String(alarmByte, BIN) + ")", DEBUG, "UART");
+    } else {
+        // Eski format, alarm yok
+        alarmByte = 0;
+
+        // Debug log (alarm olmadan)
+        addLog("📊 LED Parse: IN=0x" + String(inputByte, HEX) +
+               " (0b" + String(inputByte, BIN) + "), OUT=0x" + String(outputByte, HEX) +
+               " (0b" + String(outputByte, BIN) + ")", DEBUG, "UART");
+    }
+
     return true;
 }
 
@@ -704,14 +726,14 @@ String getLEDStatusReadable() {
     if (!requestLEDStatus(ledData)) {
         return "LED durumu alınamadı";
     }
-    
-    uint8_t inputByte = 0, outputByte = 0;
-    if (!parseLEDStatus(ledData, inputByte, outputByte)) {
+
+    uint8_t inputByte = 0, outputByte = 0, alarmByte = 0;
+    if (!parseLEDStatus(ledData, inputByte, outputByte, alarmByte)) {
         return "LED verisi parse edilemedi: " + ledData;
     }
-    
+
     String status = "LED Durumu [" + ledData + "]:\n";
-    
+
     // Input LED'leri
     status += "INPUT: ";
     int activeInputs = 0;
@@ -722,7 +744,7 @@ String getLEDStatusReadable() {
         }
     }
     status += "(" + String(activeInputs) + "/8)\n";
-    
+
     // Output LED'leri
     status += "OUTPUT: ";
     int activeOutputs = 0;
@@ -732,7 +754,43 @@ String getLEDStatusReadable() {
             activeOutputs++;
         }
     }
-    status += "(" + String(activeOutputs) + "/8)";
-    
+    status += "(" + String(activeOutputs) + "/8)\n";
+
+    // Alarm LED'leri (eğer varsa)
+    if (alarmByte != 0) {
+        status += "ALARM: ";
+
+        // Alarm byte formatı:
+        // Bit 6 (0x40) = NTP Alarm
+        // Bit 5 (0x20) = DC2 Alarm
+        // Bit 4 (0x10) = DC1 Alarm
+        // Bit 1,2,3 (0x02,0x06,0x08) = RS232 Alarm
+
+        bool hasAlarm = false;
+
+        if (alarmByte & 0x40) {
+            status += "NTP ";
+            hasAlarm = true;
+        }
+        if (alarmByte & 0x20) {
+            status += "DC2 ";
+            hasAlarm = true;
+        }
+        if (alarmByte & 0x10) {
+            status += "DC1 ";
+            hasAlarm = true;
+        }
+        if ((alarmByte & 0x02) || (alarmByte & 0x04) || (alarmByte & 0x08)) {
+            status += "RS232 ";
+            hasAlarm = true;
+        }
+
+        if (!hasAlarm) {
+            status += "YOK";
+        }
+    } else {
+        status += "ALARM: YOK";
+    }
+
     return status;
 }

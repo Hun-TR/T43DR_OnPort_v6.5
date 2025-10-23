@@ -58,7 +58,8 @@ void updateUARTStats(bool success);
 
 // LED durum sorgulama fonksiyonları
 bool requestLEDStatus(String& ledResponse);
-bool parseLEDStatus(const String& ledData, uint8_t& inputByte, uint8_t& outputByte);
+bool parseLEDStatus(const String& ledData, uint8_t& inputByte, uint8_t& outputByte); // Eski format (backward compatibility)
+bool parseLEDStatus(const String& ledData, uint8_t& inputByte, uint8_t& outputByte, uint8_t& alarmByte); // Yeni format (L:AABBCC)
 String getLEDStatusReadable();
 
 #endif // UART_HANDLER_H

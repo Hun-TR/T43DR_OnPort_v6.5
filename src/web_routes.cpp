@@ -850,31 +850,72 @@ void handleGetLedStatusAPI() {
     doc["timestamp"] = getFormattedTimestamp();
     
     if (success && ledResponse.length() > 0) {
-        // Parse LED data - Format: "L:AABB"
+        // Parse LED data - Format: "L:AABBCC"
         // AA = Input byte (2 hex digits)
         // BB = Output byte (2 hex digits)
+        // CC = Alarm byte (2 hex digits) - OPSİYONEL
         if (ledResponse.startsWith("L:")) {
             String hexData = ledResponse.substring(2);
             hexData.trim();
-            
+
             // Minimum 4 karakter olmalı (AABB)
             if (hexData.length() >= 4) {
-                // İlk 2 karakter Input, son 2 karakter Output
+                // İlk 2 karakter Input, sonraki 2 karakter Output
                 String inputHex = hexData.substring(0, 2);
                 String outputHex = hexData.substring(2, 4);
-                
+
                 doc["parsed"]["valid"] = true;
                 doc["parsed"]["rawData"] = hexData;
                 doc["parsed"]["inputHex"] = inputHex;
                 doc["parsed"]["outputHex"] = outputHex;
-                
+
                 // Hex string'i integer'a çevir
                 long inputByte = strtol(inputHex.c_str(), NULL, 16);
                 long outputByte = strtol(outputHex.c_str(), NULL, 16);
-                
+
                 doc["parsed"]["inputByte"] = inputByte;
                 doc["parsed"]["outputByte"] = outputByte;
-                
+
+                // Eğer 6 veya daha fazla karakter varsa, alarm byte'ı da parse et
+                long alarmByte = 0;
+                if (hexData.length() >= 6) {
+                    String alarmHex = hexData.substring(4, 6);
+                    alarmByte = strtol(alarmHex.c_str(), NULL, 16);
+
+                    doc["parsed"]["alarmHex"] = alarmHex;
+                    doc["parsed"]["alarmByte"] = alarmByte;
+
+                    // Alarm binary formatı
+                    char alarmBinary[9];
+                    for (int i = 0; i < 8; i++) {
+                        alarmBinary[7-i] = (alarmByte & (1 << i)) ? '1' : '0';
+                    }
+                    alarmBinary[8] = '\0';
+                    doc["parsed"]["alarmBinary"] = String(alarmBinary);
+
+                    // Alarm detayları
+                    JsonObject alarms = doc["parsed"]["alarms"].to<JsonObject>();
+                    alarms["ntp"] = (alarmByte & 0x40) != 0;       // Bit 6
+                    alarms["dc2"] = (alarmByte & 0x20) != 0;       // Bit 5
+                    alarms["dc1"] = (alarmByte & 0x10) != 0;       // Bit 4
+                    alarms["rs232"] = ((alarmByte & 0x02) != 0) ||
+                                     ((alarmByte & 0x04) != 0) ||
+                                     ((alarmByte & 0x08) != 0);    // Bit 1, 2, 3
+                    alarms["general"] = alarms["ntp"] || alarms["dc2"] ||
+                                       alarms["dc1"] || alarms["rs232"];
+                } else {
+                    // Eski format, alarm yok
+                    doc["parsed"]["alarmHex"] = "00";
+                    doc["parsed"]["alarmByte"] = 0;
+
+                    JsonObject alarms = doc["parsed"]["alarms"].to<JsonObject>();
+                    alarms["ntp"] = false;
+                    alarms["dc2"] = false;
+                    alarms["dc1"] = false;
+                    alarms["rs232"] = false;
+                    alarms["general"] = false;
+                }
+
                 // Binary formatlarını da ekle (debug için)
                 char inputBinary[9];
                 char outputBinary[9];
@@ -884,10 +925,10 @@ void handleGetLedStatusAPI() {
                 }
                 inputBinary[8] = '\0';
                 outputBinary[8] = '\0';
-                
+
                 doc["parsed"]["inputBinary"] = String(inputBinary);
                 doc["parsed"]["outputBinary"] = String(outputBinary);
-                
+
                 // Her bir LED'in durumunu hesapla
                 JsonArray inputs = doc["parsed"]["inputs"].to<JsonArray>();
                 int activeInputs = 0;
@@ -896,7 +937,7 @@ void handleGetLedStatusAPI() {
                     inputs.add(isOn);
                     if (isOn) activeInputs++;
                 }
-                
+
                 JsonArray outputs = doc["parsed"]["outputs"].to<JsonArray>();
                 int activeOutputs = 0;
                 for (int i = 0; i < 8; i++) {
@@ -904,21 +945,26 @@ void handleGetLedStatusAPI() {
                     outputs.add(isOn);
                     if (isOn) activeOutputs++;
                 }
-                
+
                 doc["parsed"]["activeInputs"] = activeInputs;
                 doc["parsed"]["activeOutputs"] = activeOutputs;
-                
-                // Log ekle
-                addLog("LED durumu: IN=" + String(activeInputs) + "/8, OUT=" + 
-                       String(activeOutputs) + "/8 [" + hexData + "]", INFO, "LED");
-                
+
+                // Log ekle (alarm bilgisiyle)
+                String logMsg = "LED durumu: IN=" + String(activeInputs) + "/8, OUT=" +
+                               String(activeOutputs) + "/8";
+                if (alarmByte != 0) {
+                    logMsg += ", ALARM=0x" + String((int)alarmByte, HEX);
+                }
+                logMsg += " [" + hexData + "]";
+                addLog(logMsg, INFO, "LED");
+
             } else {
                 doc["parsed"]["valid"] = false;
-                doc["parsed"]["error"] = "Data too short (expected 4 chars)";
+                doc["parsed"]["error"] = "Data too short (expected at least 4 chars)";
             }
         } else {
             doc["parsed"]["valid"] = false;
-            doc["parsed"]["error"] = "Invalid format (expected L:XXXX)";
+            doc["parsed"]["error"] = "Invalid format (expected L:XXXX or L:XXXXXX)";
         }
     } else {
         doc["parsed"]["valid"] = false;
